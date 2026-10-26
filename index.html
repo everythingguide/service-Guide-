@@ -500,3 +500,21 @@ render();
 </script>
 </body>
 </html>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+  import { getFirestore } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyBKYGd4tWIS3Bop",
+    authDomain: "service-guide-c39fa.firebaseapp.com",
+    projectId: "service-guide-c39fa",
+    storageBucket: "service-guide-c39fa.appspot.com",
+    messagingSenderId: "821509473121",
+    appId: "1:821509473121:web:12b6f1e5b40f0336853b20",
+    measurementId: "G-QDCVMMZMCB"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  console.log("Firebase connected!");
+</script>
