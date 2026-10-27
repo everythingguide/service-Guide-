@@ -279,7 +279,7 @@ var providers=[
 var $=function(id){return document.getElementById(id)};
 function h(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
 var store={get:function(k,d){try{return JSON.parse(localStorage.getItem(k))||d}catch(e){return d}},set:function(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
-var activeProvider=null,activeCategory="",pickRating=0;
+var activeProvider=null,activeCategory="",pickRating=0,cloudRev={};
 
 /* ---------- images ---------- */
 function banner(p){
@@ -293,7 +293,7 @@ function img(p,cls){
 }
 
 /* ---------- reviews ---------- */
-function allReviews(p){var s=store.get("sg_reviews",{});return (s[p.id]||[]).concat(p.reviews||[])}
+function allReviews(p){var s=store.get("sg_reviews",{});return (cloudRev[p.id]||[]).concat(s[p.id]||[],p.reviews||[])}
 function rating(p){var r=allReviews(p);if(!r.length)return{avg:0,count:0};var t=r.reduce(function(a,b){return a+b.rating},0);return{avg:t/r.length,count:r.length}}
 function stars(avg){
   var s=h("span","stars","★★★★★");s.setAttribute("role","img");s.setAttribute("aria-label",avg.toFixed(1)+" out of 5 stars");
@@ -378,9 +378,9 @@ $("sendReview").onclick=function(){
   var text=$("reviewText").value.trim();
   if(!pickRating){n.textContent="Please choose a star rating.";return}
   if(!text){n.textContent="Please tell others a little about your experience.";return}
-  var s=store.get("sg_reviews",{}),id=activeProvider.id;s[id]=s[id]||[];
-  s[id].unshift({name:$("reviewName").value.trim()||"Customer",rating:pickRating,text:text,date:new Date().toISOString()});
-  store.set("sg_reviews",s);
+  var id=activeProvider.id,rv={name:$("reviewName").value.trim()||"Customer",rating:pickRating,text:text,date:new Date().toISOString()};
+  if(window.sgCloud){cloudRev[id]=cloudRev[id]||[];cloudRev[id].unshift(rv);window.sgCloud.add("reviews",{providerId:id,name:rv.name,rating:rv.rating,text:rv.text,date:rv.date}).catch(function(){})}
+  else{var s=store.get("sg_reviews",{});s[id]=s[id]||[];s[id].unshift(rv);store.set("sg_reviews",s)}
   n.textContent="Thank you! Your review has been posted.";
   pickRating=0;paintPick();$("reviewText").value="";$("reviewName").value="";
   renderReviews(activeProvider);
@@ -392,10 +392,9 @@ $("sendEnquiry").onclick=function(){
   if(!activeProvider)return;
   var msg=$("messageText").value.trim();
   if(!msg){$("enquiryNotice").textContent="Please add a few details about the service you need.";return}
-  var arr=store.get("sc_enquiries",[]);
-  arr.push({provider:activeProvider.name,name:$("customerName").value.trim(),contact:$("customerContact").value.trim(),message:msg,budget:$("budget").value.trim(),date:new Date().toISOString()});
-  store.set("sc_enquiries",arr);
-  $("enquiryNotice").textContent="Enquiry saved. Delivery to providers switches on once the Service Guide inbox is connected.";
+  var rec={provider:activeProvider.name,providerId:activeProvider.id,name:$("customerName").value.trim(),contact:$("customerContact").value.trim(),message:msg,budget:$("budget").value.trim(),date:new Date().toISOString()};
+  var saveLocal=function(){var arr=store.get("sc_enquiries",[]);arr.push(rec);store.set("sc_enquiries",arr);$("enquiryNotice").textContent="Enquiry saved on this device. Delivery to providers switches on once the Service Guide inbox is connected."};
+  if(window.sgCloud){$("enquiryNotice").textContent="Sending...";window.sgCloud.add("enquiries",rec).then(function(){$("enquiryNotice").textContent="Enquiry sent to Service Guide. Thank you!"}).catch(saveLocal)}else{saveLocal()}
 };
 
 /* ---------- search + filters ---------- */
@@ -410,9 +409,9 @@ document.querySelectorAll(".cat").forEach(function(b){b.onclick=function(){
 }});
 $("joinForm").onsubmit=function(e){
   e.preventDefault();
-  var arr=store.get("sc_listing_requests",[]);
-  arr.push({business:$("businessName").value.trim(),contactPerson:$("providerName").value.trim(),category:$("providerCategory").value,area:$("providerArea").value.trim(),services:$("providerServices").value.trim(),contact:$("providerContact").value.trim(),date:new Date().toISOString()});
-  store.set("sc_listing_requests",arr);
+  var lrec={business:$("businessName").value.trim(),contactPerson:$("providerName").value.trim(),category:$("providerCategory").value,area:$("providerArea").value.trim(),services:$("providerServices").value.trim(),contact:$("providerContact").value.trim(),date:new Date().toISOString()};
+  var lLocal=function(){var arr=store.get("sc_listing_requests",[]);arr.push(lrec);store.set("sc_listing_requests",arr)};
+  if(window.sgCloud){window.sgCloud.add("listingRequests",lrec).catch(lLocal)}else{lLocal()}
   $("joinStatus").hidden=false;$("joinStatus").textContent="Thank you! Your listing request has been received.";
 };
 
@@ -494,27 +493,36 @@ $("aiSend").onclick=function(){send()};
 $("aiInput").addEventListener("keydown",function(e){if(e.key==="Enter")send()});
 $("chatClear").onclick=resetChat;
 
+function loadCloud(){if(!window.sgCloud)return;window.sgCloud.reviews().then(function(list){
+  cloudRev={};list.forEach(function(r){var k=r.providerId;(cloudRev[k]=cloudRev[k]||[]).push({name:r.name,rating:r.rating,text:r.text,date:r.date})});
+  render();if(activeProvider&&$("providerModal").classList.contains("show"))renderReviews(activeProvider)}).catch(function(){})}
+window.addEventListener("sg-cloud-ready",loadCloud);
 greet(true);
 render();
+loadCloud();
 })();
+</script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, collection, addDoc, serverTimestamp, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+const firebaseConfig = {
+  apiKey: "AIzaSyBKYGd4tWIs3Bopiif3irJeg3bThrGJiG4",
+  authDomain: "service-guide-c39fa.firebaseapp.com",
+  projectId: "service-guide-c39fa",
+  storageBucket: "service-guide-c39fa.firebasestorage.app",
+  messagingSenderId: "821509473121",
+  appId: "1:821509473121:web:12b6f1e5b40f0336853b20"
+};
+try{
+  if(firebaseConfig.apiKey.indexOf("PASTE")<0){
+    const db=getFirestore(initializeApp(firebaseConfig));
+    window.sgCloud={
+      add:(col,data)=>addDoc(collection(db,col),Object.assign({},data,{createdAt:serverTimestamp()})),
+      reviews:async()=>{const s=await getDocs(query(collection(db,"reviews"),orderBy("createdAt","desc"),limit(300)));return s.docs.map(d=>d.data())}
+    };
+    window.dispatchEvent(new Event("sg-cloud-ready"));
+  }
+}catch(e){console.warn("Firebase not started",e)}
 </script>
 </body>
 </html>
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-  import { getFirestore } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-
-  const firebaseConfig = {
-    apiKey: "AIzaSyBKYGd4tWIS3Bop",
-    authDomain: "service-guide-c39fa.firebaseapp.com",
-    projectId: "service-guide-c39fa",
-    storageBucket: "service-guide-c39fa.appspot.com",
-    messagingSenderId: "821509473121",
-    appId: "1:821509473121:web:12b6f1e5b40f0336853b20",
-    measurementId: "G-QDCVMMZMCB"
-  };
-
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
-  console.log("Firebase connected!");
-</script>
